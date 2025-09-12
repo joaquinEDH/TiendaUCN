@@ -1,8 +1,16 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using Serilog;
+using System.Text;
+using Tienda.src.Application.Services.Implements;
+using Tienda.src.Application.Services.Interfaces;
 using Tienda.src.Domain.Models;
 using Tienda.src.Infrastructure.Data;
+using Tienda.src.Infrastructure.Repositories.Implements;
+using Tienda.src.Infrastructure.Repositories.Interfaces;
+
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("SqliteDatabase") ?? throw new InvalidOperationException("Connection string SqliteDatabase no configurado");
@@ -16,6 +24,15 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 
 // ---------- Servicios ----------
 builder.Services.AddOpenApi();
+builder.Services.AddControllers(); // <- Agregar controladores
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+// Repositories
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+
+// Services
+builder.Services.AddScoped<IProductService, ProductService>();
+
 
 #region Database Configuration
 Log.Information("Configurando base de datos SQLite");
@@ -26,6 +43,7 @@ builder.Services.AddDbContext<DataContext>(options =>
 // Identity 
 #region Identity Configuration
 Log.Information("Configurando Identity");
+builder.Services.AddDataProtection();
 builder.Services.AddIdentityCore<User>(options =>
 {
     //Configuración de contraseña
@@ -44,8 +62,44 @@ builder.Services.AddIdentityCore<User>(options =>
 .AddDefaultTokenProviders();
 #endregion
 
+#region Authentication Configuration
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    string jwtSecret = builder.Configuration["JWTSecret"]
+        ?? throw new InvalidOperationException("La clave secreta JWT no está configurada.");
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero
+    };
+});
+#endregion
+
 // ---------- App ----------
 var app = builder.Build();
 
+app.UseSwagger();
+app.UseSwaggerUI();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers(); // <- Mapear tus controladores
 app.MapOpenApi();
+
+// Ejecutar seeder
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    await DataSeeder.Initialize(services);
+}
+
 app.Run();
