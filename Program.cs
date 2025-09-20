@@ -27,11 +27,14 @@ builder.Services.AddOpenApi();
 builder.Services.AddControllers(); // <- Agregar controladores
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-// Repositories
-builder.Services.AddScoped<IProductRepository, ProductRepository>();
 
-// Services
-builder.Services.AddScoped<IProductService, ProductService>();
+// Repositories
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+
+// Services (auth)
+builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<IEmailService, EmailService>(); // tu No-Op o la real
 
 
 #region Database Configuration
