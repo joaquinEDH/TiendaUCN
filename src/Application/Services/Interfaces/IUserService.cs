@@ -43,5 +43,8 @@ namespace Tienda.src.Application.Services.Interfaces
         /// </summary>
         /// <returns>Número de usuarios eliminados</returns>
         Task<int> DeleteUnconfirmedAsync();
+
+        Task<string> RecoverPasswordAsync(string email);
+        Task<string> ResetPasswordAsync(ResetPasswordDTO dto);
     }
 }

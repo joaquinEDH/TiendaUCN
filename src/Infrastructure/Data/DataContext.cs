@@ -32,5 +32,6 @@ namespace Tienda.src.Infrastructure.Data
         public DbSet<Cart> Carts { get; set; } = null!;
 
         public DbSet<CartItem> CartItems { get; set; } = null!;
+        public DbSet<VerificationCode> VerificationCodes => Set<VerificationCode>();
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Resend;
 using Serilog;
 using System.Text;
 using Tienda.src.Application.Services.Implements;
@@ -24,18 +25,29 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 
 // ---------- Servicios ----------
 builder.Services.AddOpenApi();
-builder.Services.AddControllers(); // <- Agregar controladores
+builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Repositories
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IVerificationCodeRepository, VerificationCodeRepository>();
 
 // Services (auth)
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
-builder.Services.AddScoped<IEmailService, EmailService>(); // tu No-Op o la real
 
+
+// ==== Resend  ====    
+builder.Services.AddOptions();
+builder.Services.AddHttpClient<ResendClient>();
+builder.Services.Configure<ResendClientOptions>(o =>
+{
+    o.ApiToken = builder.Configuration["ResendAPIKey"]
+                 ?? throw new InvalidOperationException("ResendAPIKey no está configurado.");
+});
+builder.Services.AddTransient<IResend, ResendClient>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 #region Database Configuration
 Log.Information("Configurando base de datos SQLite");

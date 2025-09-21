@@ -49,5 +49,26 @@ namespace Tienda.src.API.Controllers
             var message = await _userService.ResendEmailVerificationCodeAsync(dto);
             return Ok(new GenericResponse<string>("Solicitud procesada", message));
         }
+        [HttpPost("logout")]
+        public IActionResult Logout()
+        {
+            // El cliente debe borrar el JWT; aquí solo respondemos OK.
+            return Ok(new GenericResponse<string>("Sesión cerrada", "Logout exitoso."));
+        }
+
+        [HttpPost("recover-password")]
+        public async Task<IActionResult> RecoverPassword([FromBody] RecoverPasswordDTO dto)
+        {
+            var msg = await _userService.RecoverPasswordAsync(dto.Email);
+            return Ok(new GenericResponse<string>("Solicitud procesada", msg));
+        }
+
+        [HttpPatch("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDTO dto)
+        {
+            var msg = await _userService.ResetPasswordAsync(dto);
+            return Ok(new GenericResponse<string>("Contraseña restablecida", msg));
+        }
     }
+
 }

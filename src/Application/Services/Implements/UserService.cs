@@ -1,12 +1,12 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Serilog;
 using Tienda.src.Application.DTO;
 using Tienda.src.Application.DTO.AuthDTO;
 using Tienda.src.Application.Services.Interfaces;
 using Tienda.src.Domain.Models;
+using Tienda.src.Infrastructure.Repositories.Interfaces;
 
 namespace Tienda.src.Application.Services.Implements
 {
@@ -17,22 +17,25 @@ namespace Tienda.src.Application.Services.Implements
         private readonly ITokenService _tokenService;
         private readonly IEmailService _emailService;
         private readonly IConfiguration _config;
+        private readonly IVerificationCodeRepository _verificationCodeRepository;
 
         public UserService(
             UserManager<User> userManager,
             RoleManager<Role> roleManager,
             ITokenService tokenService,
             IEmailService emailService,
-            IConfiguration config)
+            IConfiguration config,
+            IVerificationCodeRepository verificationCodeRepository)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _tokenService = tokenService;
             _emailService = emailService;
             _config = config;
+            _verificationCodeRepository = verificationCodeRepository;
         }
 
-        // -------- LOGIN --------
+        // ---------- LOGIN ----------
         public async Task<(string token, int userId)> LoginAsync(LoginDTO loginDTO, HttpContext httpContext)
         {
             var user = await _userManager.Users.FirstOrDefaultAsync(u => u.Email == loginDTO.Email);
@@ -49,18 +52,14 @@ namespace Tienda.src.Application.Services.Implements
             var roles = await _userManager.GetRolesAsync(user);
             var roleName = roles.FirstOrDefault() ?? "Customer";
 
-            // loginDTO.RememberMe es bool (no nullable)
-            var rememberMe = loginDTO.RememberMe;
-
-            var token = _tokenService.GenerateToken(user, roleName, rememberMe);
+            var token = _tokenService.GenerateToken(user, roleName, loginDTO.RememberMe);
             Log.Information("Usuario {Email} inició sesión", user.Email);
             return (token, user.Id);
         }
 
-        // -------- REGISTER (sin verificación, deja EmailConfirmed=true) --------
+        // ---------- REGISTER ----------
         public async Task<string> RegisterAsync(RegisterDTO dto, HttpContext httpContext)
         {
-            // Unicidad por Email y RUT
             if (await _userManager.Users.AnyAsync(u => u.Email == dto.Email))
                 throw new InvalidOperationException("El email ya está registrado");
 
@@ -74,10 +73,10 @@ namespace Tienda.src.Application.Services.Implements
                 FirstName = dto.FirstName,
                 LastName = dto.LastName,
                 Rut = dto.Rut,
-                Gender = ParseGender(dto.Gender),        // <-- mapeo string -> enum
+                Gender = ParseGender(dto.Gender),
                 BirthDate = dto.BirthDate,
                 PhoneNumber = dto.PhoneNumber,
-                EmailConfirmed = true                    // <-- por ahora confirmamos directo
+                EmailConfirmed = false
             };
 
             var createResult = await _userManager.CreateAsync(user, dto.Password);
@@ -87,43 +86,232 @@ namespace Tienda.src.Application.Services.Implements
                 throw new InvalidOperationException($"No se pudo crear el usuario: {errs}");
             }
 
-            // rol por defecto
             if (!await _roleManager.RoleExistsAsync("Customer"))
                 await _roleManager.CreateAsync(new Role { Name = "Customer", NormalizedName = "CUSTOMER" });
-
             await _userManager.AddToRoleAsync(user, "Customer");
 
-            // Email de bienvenida (fake o real según tu EmailService)
-            try { await _emailService.SendWelcomeEmailAsync(user.Email!); } catch { /* opcional: loggear */ }
+            // Crear y enviar código
+            var expiryMin = _config.GetValue<int?>("VerificationCode:ExpirationTimeInMinutes") ?? 3;
+            var code = new Random().Next(100000, 999999).ToString();
 
-            Log.Information("Usuario {Email} registrado (email confirmado por defecto).", user.Email);
-            return "Usuario registrado correctamente.";
+            var vc = new VerificationCode
+            {
+                UserId = user.Id,
+                Code = code,
+                CodeType = CodeType.EmailVerification,
+                AttemptCount = 0,
+                CreatedAt = DateTime.UtcNow,
+                ExpiryDate = DateTime.UtcNow.AddMinutes(expiryMin)
+            };
+
+            await _verificationCodeRepository.CreateAsync(vc);
+            try
+            {
+                await _emailService.SendVerificationCodeEmailAsync(user.Email!, code);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[DEV] Falló envío de email. Continuando. Code={Code}", code);
+
+                if (_config["ASPNETCORE_ENVIRONMENT"] == "Development")
+                {
+                }
+            }
+
+            Log.Information("Usuario {Email} registrado. Código enviado.", user.Email);
+            return "Usuario registrado. Revisa tu email para verificar la cuenta.";
         }
 
-        // -------- VERIFY EMAIL (placeholder) --------
-        public Task<string> VerifyEmailAsync(VerifyEmailDTO verifyEmailDTO)
+        // ---------- VERIFY EMAIL ----------
+        public async Task<string> VerifyEmailAsync(VerifyEmailDTO dto)
         {
-            // Placeholder mientras no tengas VerificationCode
-            return Task.FromResult("La verificación por email aún no está habilitada en este entorno.");
+            var user = await _userManager.FindByEmailAsync(dto.Email);
+            if (user == null) throw new KeyNotFoundException("Usuario no encontrado");
+
+            if (user.EmailConfirmed)
+                throw new InvalidOperationException("El email ya está verificado");
+
+            var lastCode = await _verificationCodeRepository.GetLatestByUserIdAsync(user.Id, CodeType.EmailVerification);
+            if (lastCode is null)
+                throw new InvalidOperationException("Código de verificación no encontrado");
+
+            // Check expiración
+            if (DateTime.UtcNow >= lastCode.ExpiryDate)
+            {
+                await _verificationCodeRepository.IncreaseAttemptsAsync(user.Id, CodeType.EmailVerification);
+                throw new InvalidOperationException("Código expirado");
+            }
+
+            // Check match
+            if (!string.Equals(dto.VerificationCode, lastCode.Code, StringComparison.Ordinal))
+            {
+                var attempts = await _verificationCodeRepository.IncreaseAttemptsAsync(user.Id, CodeType.EmailVerification);
+                if (attempts >= 5)
+                {
+                    await _verificationCodeRepository.DeleteByUserIdAsync(user.Id);
+                    await _userManager.DeleteAsync(user);
+                    throw new InvalidOperationException("Demasiados intentos fallidos. Cuenta eliminada.");
+                }
+                throw new InvalidOperationException("Código inválido");
+            }
+
+            // Confirmar email + limpiar códigos + welcome
+            user.EmailConfirmed = true;
+            await _userManager.UpdateAsync(user);
+            await _verificationCodeRepository.DeleteByUserIdAsync(user.Id);
+
+            try { await _emailService.SendWelcomeEmailAsync(user.Email!); } catch { /* log opcional */ }
+
+            Log.Information("Email verificado para {Email}", user.Email);
+            return "Email verificado exitosamente. ¡Ya puedes iniciar sesión!";
         }
 
-        // -------- RESEND CODE (placeholder) --------
-        public Task<string> ResendEmailVerificationCodeAsync(ResendEmailVerificationCodeDTO resendEmailVerificationCodeDTO)
+        // ---------- RESEND CODE ----------
+        public async Task<string> ResendEmailVerificationCodeAsync(ResendEmailVerificationCodeDTO dto)
         {
-            // Placeholder mientras no tengas VerificationCode
-            return Task.FromResult("El reenvío de código aún no está habilitado en este entorno.");
+            var user = await _userManager.FindByEmailAsync(dto.Email);
+            if (user == null) throw new InvalidOperationException("Usuario no encontrado");
+
+            if (user.EmailConfirmed)
+                throw new InvalidOperationException("El email ya está verificado");
+
+            var expiryMin = _config.GetValue<int?>("VerificationCode:ExpirationTimeInMinutes") ?? 3;
+            var lastCode = await _verificationCodeRepository.GetLatestByUserIdAsync(user.Id, CodeType.EmailVerification);
+
+            // Rate limit: si aún no venció, no reenviar
+            if (lastCode != null && DateTime.UtcNow < lastCode.ExpiryDate)
+            {
+                var remaining = (int)(lastCode.ExpiryDate - DateTime.UtcNow).TotalSeconds;
+                throw new InvalidOperationException($"Debes esperar {remaining} segundos para solicitar otro código.");
+            }
+
+            var newCode = new Random().Next(100000, 999999).ToString();
+            var vc = new VerificationCode
+            {
+                UserId = user.Id,
+                Code = newCode,
+                CodeType = CodeType.EmailVerification,
+                AttemptCount = 0,
+                CreatedAt = DateTime.UtcNow,
+                ExpiryDate = DateTime.UtcNow.AddMinutes(expiryMin)
+            };
+
+            await _verificationCodeRepository.CreateAsync(vc);
+            await _emailService.SendVerificationCodeEmailAsync(user.Email!, newCode);
+
+            Log.Information("Código reenviado a {Email}", user.Email);
+            return "Código de verificación reenviado a tu email";
         }
 
-        // -------- DELETE UNCONFIRMED --------
+        // ---------- RECOVER PASSWORD ----------
+        public async Task<string> RecoverPasswordAsync(string email)
+        {
+            var user = await _userManager.FindByEmailAsync(email);
+
+
+            if (user is null)
+                return "Si el correo existe, se enviará un código de recuperación.";
+
+            if (!user.EmailConfirmed)
+                throw new InvalidOperationException("Debes verificar tu email antes de recuperar la contraseña.");
+
+            var expiryMin = _config.GetValue<int?>("VerificationCode:ExpirationTimeInMinutes") ?? 3;
+
+            // Rate limit: si el último código de PasswordReset aún no vence, no se genera otro
+            var last = await _verificationCodeRepository
+                .GetLatestByUserIdAsync(user.Id, CodeType.PasswordReset);
+
+            if (last != null && DateTime.UtcNow < last.ExpiryDate)
+            {
+                var remaining = (int)(last.ExpiryDate - DateTime.UtcNow).TotalSeconds;
+                throw new InvalidOperationException($"Debes esperar {remaining} segundos para solicitar otro código.");
+            }
+
+            // Nuevo código de 6 dígitos
+            var code = new Random().Next(100000, 999999).ToString();
+
+            var vc = new VerificationCode
+            {
+                UserId = user.Id,
+                Code = code,
+                CodeType = CodeType.PasswordReset,
+                AttemptCount = 0,
+                CreatedAt = DateTime.UtcNow,
+                ExpiryDate = DateTime.UtcNow.AddMinutes(expiryMin)
+            };
+
+            await _verificationCodeRepository.CreateAsync(vc);
+
+            // Envía correo 
+            await _emailService.SendVerificationCodeEmailAsync(user.Email!, code);
+
+            Serilog.Log.Information("Código de recuperación enviado a {Email}", email);
+            return "Si el correo existe, se enviará un código de recuperación.";
+        }
+
+        // ---------- RESET PASSWORD ----------
+        public async Task<string> ResetPasswordAsync(ResetPasswordDTO dto)
+        {
+            var user = await _userManager.FindByEmailAsync(dto.Email);
+            if (user is null)
+                throw new InvalidOperationException("Usuario no encontrado.");
+
+            if (!user.EmailConfirmed)
+                throw new InvalidOperationException("Debes verificar tu email antes de recuperar la contraseña.");
+
+            var lastCode = await _verificationCodeRepository
+                .GetLatestByUserIdAsync(user.Id, CodeType.PasswordReset);
+
+            if (lastCode is null)
+                throw new InvalidOperationException("Código de recuperación no encontrado.");
+
+            // Expirado
+            if (DateTime.UtcNow >= lastCode.ExpiryDate)
+            {
+                await _verificationCodeRepository.IncreaseAttemptsAsync(user.Id, CodeType.PasswordReset);
+                throw new InvalidOperationException("Código expirado.");
+            }
+
+            // No coincide
+            if (!string.Equals(dto.VerificationCode, lastCode.Code, StringComparison.Ordinal))
+            {
+                var attempts = await _verificationCodeRepository.IncreaseAttemptsAsync(user.Id, CodeType.PasswordReset);
+                if (attempts >= 5)
+                {
+                    await _verificationCodeRepository.DeleteByUserIdAsync(user.Id, CodeType.PasswordReset);
+                    throw new InvalidOperationException("Demasiados intentos fallidos.");
+                }
+                throw new InvalidOperationException("Código inválido.");
+            }
+
+            // Cambiar la contraseña usando Identity (token interno + hash seguro)
+            var identityToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+            var result = await _userManager.ResetPasswordAsync(user, identityToken, dto.NewPassword);
+
+            if (!result.Succeeded)
+            {
+                var errs = string.Join(", ", result.Errors.Select(e => e.Description));
+                throw new InvalidOperationException($"No se pudo actualizar la contraseña: {errs}");
+            }
+
+            // Limpia códigos de PasswordReset
+            await _verificationCodeRepository.DeleteByUserIdAsync(user.Id, CodeType.PasswordReset);
+
+            Serilog.Log.Information("Contraseña restablecida para {Email}", user.Email);
+            return "Contraseña restablecida correctamente.";
+        }
+
         public async Task<int> DeleteUnconfirmedAsync()
         {
+            var cutoff = DateTime.UtcNow.AddDays(-7);
             var toDelete = await _userManager.Users
-                .Where(u => !u.EmailConfirmed)
+                .Where(u => !u.EmailConfirmed && u.RegisteredAt < cutoff)
                 .ToListAsync();
 
             var count = 0;
             foreach (var u in toDelete)
             {
+                await _verificationCodeRepository.DeleteByUserIdAsync(u.Id);
                 var res = await _userManager.DeleteAsync(u);
                 if (res.Succeeded) count++;
             }
@@ -134,16 +322,10 @@ namespace Tienda.src.Application.Services.Implements
         private static Gender ParseGender(string? value)
         {
             if (string.IsNullOrWhiteSpace(value)) return Gender.Otro;
-
-            // intenta parseo directo respetando nombres de tu enum (Masculino, Femenino, Otro)
-            if (Enum.TryParse<Gender>(value, ignoreCase: true, out var g))
-                return g;
-
-            // mapeos opcionales por si te llegan variantes
+            if (Enum.TryParse<Gender>(value, true, out var g)) return g;
             var v = value.Trim().ToLowerInvariant();
             if (v.StartsWith("masc")) return Gender.Masculino;
             if (v.StartsWith("fem")) return Gender.Femenino;
-
             return Gender.Otro;
         }
     }
