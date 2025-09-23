@@ -1,3 +1,4 @@
+using Mapster;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -5,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Resend;
 using Serilog;
 using System.Text;
+using Tienda.src.Application.Mappers;
 using Tienda.src.Application.Services.Implements;
 using Tienda.src.Application.Services.Interfaces;
 using Tienda.src.Domain.Models;
@@ -15,6 +17,9 @@ using Tienda.src.Infrastructure.Repositories.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("SqliteDatabase") ?? throw new InvalidOperationException("Connection string SqliteDatabase no configurado");
+
+// Configuración de Mapster
+MapperExtensions.ConfigureMapster();
 
 
 # region Logging Configuration

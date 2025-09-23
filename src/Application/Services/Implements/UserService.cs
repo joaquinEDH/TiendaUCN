@@ -1,3 +1,4 @@
+using Mapster;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -60,24 +61,15 @@ namespace Tienda.src.Application.Services.Implements
         // ---------- REGISTER ----------
         public async Task<string> RegisterAsync(RegisterDTO dto, HttpContext httpContext)
         {
+
+
             if (await _userManager.Users.AnyAsync(u => u.Email == dto.Email))
                 throw new InvalidOperationException("El email ya está registrado");
 
             if (await _userManager.Users.AnyAsync(u => u.Rut == dto.Rut))
                 throw new InvalidOperationException("El RUT ya está registrado");
 
-            var user = new User
-            {
-                Email = dto.Email,
-                UserName = dto.Email,
-                FirstName = dto.FirstName,
-                LastName = dto.LastName,
-                Rut = dto.Rut,
-                Gender = ParseGender(dto.Gender),
-                BirthDate = dto.BirthDate,
-                PhoneNumber = dto.PhoneNumber,
-                EmailConfirmed = false
-            };
+            var user = dto.Adapt<User>();
 
             var createResult = await _userManager.CreateAsync(user, dto.Password);
             if (!createResult.Succeeded)
