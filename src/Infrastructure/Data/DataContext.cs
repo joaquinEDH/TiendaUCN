@@ -1,5 +1,9 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Tienda.src.Domain.Models;
 
 
@@ -7,6 +11,10 @@ using Tienda.src.Domain.Models;
 
 namespace Tienda.src.Infrastructure.Data
 {
+
+    /// <summary>
+    /// Contexto de datos para la aplicación, hereda de IdentityDbContext para manejar la identidad de usuarios.
+    /// </summary>
     public class DataContext : IdentityDbContext<User, Role, int>
     {
         public DataContext(DbContextOptions<DataContext> options) : base(options) { }
@@ -24,5 +32,6 @@ namespace Tienda.src.Infrastructure.Data
         public DbSet<Cart> Carts { get; set; } = null!;
 
         public DbSet<CartItem> CartItems { get; set; } = null!;
+        public DbSet<VerificationCode> VerificationCodes => Set<VerificationCode>();
     }
 }
