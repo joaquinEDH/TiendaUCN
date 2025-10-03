@@ -22,6 +22,7 @@ var connectionString = builder.Configuration.GetConnectionString("SqliteDatabase
 MapperExtensions.ConfigureMapster();
 
 
+
 # region Logging Configuration
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
@@ -41,6 +42,10 @@ builder.Services.AddScoped<IVerificationCodeRepository, VerificationCodeReposito
 // Services (auth)
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
+
+// Products
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IProductService, ProductService>();
 
 
 // ==== Resend  ====    
@@ -102,6 +107,7 @@ builder.Services.AddAuthentication(options =>
         ClockSkew = TimeSpan.Zero
     };
 });
+builder.Services.AddAuthorization();
 #endregion
 
 // ---------- App ----------
@@ -112,7 +118,7 @@ app.UseSwaggerUI();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers(); // <- Mapear tus controladores
+app.MapControllers();
 app.MapOpenApi();
 
 // Ejecutar seeder
