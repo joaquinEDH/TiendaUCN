@@ -14,7 +14,7 @@ namespace Tienda.src.Application.Mappers
         public static void ConfigureMapster()
         {
             UserMapper.ConfigureAllMappings();
-
+            ProductMapper.Configure();
             // Configuración global de Mapster para ignorar valores nulos
             TypeAdapterConfig.GlobalSettings.Default.IgnoreNullValues(true);
         }
