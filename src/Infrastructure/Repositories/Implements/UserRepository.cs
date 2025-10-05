@@ -89,20 +89,20 @@ namespace Tienda.src.Infrastructure.Repositories.Implements
             return result.Succeeded;
         }
 
+
+        //Falta agregar verification codes??
         public async Task<int> DeleteUnconfirmedAsync()
         {
             try
             {
-                var cutoff = DateTime.UtcNow.AddDays(_daysOfDeleteUnconfirmedUsers);
-                var unconfirmed = await _context.Users
+
+                var cutoff = DateTime.UtcNow.AddDays(-_daysOfDeleteUnconfirmedUsers);
+
+                var affected = await _context.Users
                     .Where(u => !u.EmailConfirmed && u.RegisteredAt < cutoff)
-                    .ToListAsync();
+                    .ExecuteDeleteAsync();
 
-                if (!unconfirmed.Any()) return 0;
-
-                _context.Users.RemoveRange(unconfirmed);
-                await _context.SaveChangesAsync();
-                return unconfirmed.Count;
+                return affected;
             }
             catch (Exception ex)
             {

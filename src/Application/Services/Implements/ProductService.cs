@@ -13,10 +13,12 @@ namespace Tienda.src.Application.Services.Implements
     public class ProductService : IProductService
     {
         private readonly IProductRepository _productRepository;
+        private readonly IFileService _fileService;
 
-        public ProductService(IProductRepository productRepository)
+        public ProductService(IProductRepository productRepository, IFileService fileService)
         {
             _productRepository = productRepository;
+            _fileService = fileService;
         }
 
         public async Task<IEnumerable<ListedProductsDTO>> GetAllAsync()
@@ -60,6 +62,22 @@ namespace Tienda.src.Application.Services.Implements
             var created = await _productRepository.CreateAsync(entity);
             Log.Information("Producto creado: {@Product}", created);
             return created.Id.ToString();
+        }
+
+        /// <summary>
+        /// Asocia una imagen a un producto específico.
+        /// </summary>
+        /// <param name="productId">El ID del producto al que se asociará la imagen.</param>
+        /// <param name="file">El archivo de imagen a asociar.</param>
+        /// <returns>Una tarea que representa la operación asíncrona, con true si la imagen se asoció correctamente, false en caso contrario.</returns>
+        public async Task<bool> UploadImageAsync(int productId, IFormFile file)
+        {
+            // Verifica que el producto exista (vista admin)
+            var product = await _productRepository.GetByIdForAdminAsync(productId)
+                        ?? throw new KeyNotFoundException("Producto no encontrado.");
+
+
+            return await _fileService.UploadAsync(file, productId);
         }
 
 
