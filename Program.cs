@@ -1,11 +1,15 @@
+using Hangfire;
+using Hangfire.Storage.SQLite;
 using Mapster;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Resend;
 using Serilog;
 using System.Text;
+using Tienda.src.Application.Jobs;
 using Tienda.src.Application.Mappers;
 using Tienda.src.Application.Services.Implements;
 using Tienda.src.Application.Services.Interfaces;
@@ -38,7 +42,8 @@ builder.Services.AddSwaggerGen();
 // Repositories
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IVerificationCodeRepository, VerificationCodeRepository>();
-
+builder.Services.AddScoped<IFileRepository, FileRepository>();
+builder.Services.AddScoped<IFileService, FileService>();
 // Services (auth)
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
@@ -110,13 +115,72 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 #endregion
 
+#region Hangfire Configuration
+Log.Information("Configurando Hangfire");
+var cronExpression = builder.Configuration["Jobs:CronJobsDeleteUnconfirmedUsers"]
+    ?? throw new InvalidOperationException("La expresión CRON para eliminar usuarios no confirmados no está configurada.");
+var timeZone = TimeZoneInfo.FindSystemTimeZoneById(
+    builder.Configuration["Jobs:TimeZone"]
+    ?? throw new InvalidOperationException("La zona horaria para los trabajos no está configurada.")
+);
+builder.Services.AddHangfire(config =>
+{
+    var connectionStringBuilder = new SqliteConnectionStringBuilder(connectionString);
+    var databasePath = connectionStringBuilder.DataSource;
+    config.UseSQLiteStorage(databasePath);
+    config.SetDataCompatibilityLevel(CompatibilityLevel.Version_170);
+    config.UseSimpleAssemblyNameTypeSerializer();
+    config.UseRecommendedSerializerSettings();
+});
+builder.Services.AddHangfireServer();
+#endregion
 // ---------- App ----------
 var app = builder.Build();
 
-app.UseSwagger();
-app.UseSwaggerUI();
-app.UseAuthentication();
-app.UseAuthorization();
+
+// === Hangfire Dashboard (leer de la sección correcta y con mayúscula F) ===
+var dashboardSection = builder.Configuration.GetSection("HangFireDashboard");
+
+// Lee el path desde la sección correcta
+var dashboardPath = dashboardSection.GetValue<string>("DashboardPath")
+    ?? throw new InvalidOperationException("La ruta para el dashboard de Hangfire no está configurada (HangFireDashboard:DashboardPath).");
+
+// Debe ser un *path* que empiece con "/"
+if (!dashboardPath.StartsWith("/"))
+{
+    throw new InvalidOperationException("HangFireDashboard:DashboardPath debe comenzar con '/'. Ejemplo: '/hangfire'. No uses host/puerto.");
+}
+
+// Lee opciones desde la misma sección (ojo con la F mayúscula)
+var dashboardOptions = new DashboardOptions
+{
+    StatsPollingInterval = dashboardSection.GetValue<int?>("StatsPollingInterval") ?? 5000,
+    DashboardTitle = dashboardSection.GetValue<string>("DashboardTitle") ?? "Hangfire",
+    DisplayStorageConnectionString = dashboardSection.GetValue<bool?>("DisplayStorageConnectionString") ?? false
+};
+
+app.UseHangfireDashboard(dashboardPath, dashboardOptions);
+
+#region Database Migration and jobs Configuration
+Log.Information("Aplicando migraciones pendientes y configurando trabajos programados");
+using (var scope = app.Services.CreateScope())
+{
+    await DataSeeder.Initialize(scope.ServiceProvider);
+    var jobId = nameof(UserJob.DeleteUnconfirmedAsync);
+    RecurringJob.AddOrUpdate<UserJob>
+        (jobId,
+         job => job.DeleteUnconfirmedAsync(),
+        cronExpression,
+        new RecurringJobOptions
+        {
+            TimeZone = timeZone
+        });
+
+    Log.Information("Job recurrente: {JobId} con expresión CRON: {CronExpression} en zona horaria: {TimeZone}", jobId, cronExpression, timeZone);
+
+}
+#endregion
+
 
 app.MapControllers();
 app.MapOpenApi();

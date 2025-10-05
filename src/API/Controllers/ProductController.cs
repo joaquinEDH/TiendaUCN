@@ -76,5 +76,18 @@ namespace Tienda.src.Api.Controllers
             var result = await _svc.GetAllAsync(); // Por ahora es lo mismo que el público
             return Ok(result);
         }
+        // POST /api/admin/products/{id}/images
+        [HttpPost("/api/admin/products/{id:int}/images")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UploadImage(int id, [FromForm] IFormFile file)
+        {
+            if (file is null || file.Length == 0)
+                return BadRequest(new { message = "Debe adjuntar el archivo en form-data con key 'file'." });
+
+            var ok = await _svc.UploadImageAsync(id, file); // ver método abajo
+            if (!ok) return Conflict(new { message = "La imagen ya existe o no se pudo guardar." });
+
+            return Created($"/api/admin/products/{id}/images", new { message = "Imagen subida correctamente." });
+        }
     }
 }

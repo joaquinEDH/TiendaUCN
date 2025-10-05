@@ -18,6 +18,7 @@ namespace Tienda.src.Application.Services.Implements
         private readonly ITokenService _tokenService;
         private readonly IEmailService _emailService;
         private readonly IConfiguration _config;
+        private readonly IUserRepository _userRepository;
         private readonly IVerificationCodeRepository _verificationCodeRepository;
 
         public UserService(
@@ -26,12 +27,14 @@ namespace Tienda.src.Application.Services.Implements
             ITokenService tokenService,
             IEmailService emailService,
             IConfiguration config,
+            IUserRepository userRepository,
             IVerificationCodeRepository verificationCodeRepository)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _tokenService = tokenService;
             _emailService = emailService;
+            _userRepository = userRepository;
             _config = config;
             _verificationCodeRepository = verificationCodeRepository;
         }
@@ -295,20 +298,7 @@ namespace Tienda.src.Application.Services.Implements
 
         public async Task<int> DeleteUnconfirmedAsync()
         {
-            var cutoff = DateTime.UtcNow.AddDays(-7);
-            var toDelete = await _userManager.Users
-                .Where(u => !u.EmailConfirmed && u.RegisteredAt < cutoff)
-                .ToListAsync();
-
-            var count = 0;
-            foreach (var u in toDelete)
-            {
-                await _verificationCodeRepository.DeleteByUserIdAsync(u.Id);
-                var res = await _userManager.DeleteAsync(u);
-                if (res.Succeeded) count++;
-            }
-            Log.Information("Usuarios no confirmados eliminados: {Count}", count);
-            return count;
+            return await _userRepository.DeleteUnconfirmedAsync();
         }
 
         private static Gender ParseGender(string? value)
