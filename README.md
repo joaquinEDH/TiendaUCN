@@ -109,5 +109,4 @@ Body (form-data):
   Value: (choose image file)
 
 ### Author
-Joaquín Dublas
 @kakinDev
