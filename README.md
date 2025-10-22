@@ -108,5 +108,14 @@ Body (form-data):
   Key: file
   Value: (choose image file)
 
-### Author
-@kakinDev
+## 👥 Integrante
+
+| Nombre completo | Rut | Carrera | Correo institucional |
+|------------------|--------------------|----------|----------------------|
+| Joaquín Dublas | 21715440-5 | Ingeniería Civil en Computación e Informática | joaquin.dublas@alumnos.ucn.cl |
+
+
+---
+
+📅 **Universidad Católica del Norte — 2025**  
+Proyecto: *Tienda UCN API*
